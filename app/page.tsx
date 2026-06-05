@@ -15,6 +15,11 @@ type FetchState = {
   ephemeralStatus: AnyRecord | null;
 };
 
+type RunStatus = {
+  running?: boolean;
+  last_result?: AnyRecord | null;
+};
+
 type Selection = {
   tab: TabKey;
   item: AnyRecord | null;
@@ -57,6 +62,7 @@ export default function RadarPage() {
   const [error, setError] = useState("");
   const [brief, setBrief] = useState("");
   const [runMessage, setRunMessage] = useState("");
+  const [runningAgent, setRunningAgent] = useState<"agent1" | "agent2" | null>(null);
 
   useEffect(() => {
     refreshAll();
@@ -75,11 +81,11 @@ export default function RadarPage() {
     setError("");
     try {
       const [health, runs, topics, reviews, campaigns] = await Promise.all([
-        apiGet("/api/system/health"),
-        apiGet("/api/runs?limit=60"),
-        apiGet("/api/topics?limit=60"),
-        apiGet("/api/reviews?status=all&limit=60"),
-        apiGet("/api/campaigns?limit=60")
+        apiGetSafe("/api/system/health", {}),
+        apiGetSafe("/api/runs?limit=60", { runs: [], ephemeral_status: null }),
+        apiGetSafe("/api/topics?limit=60", { topics: [] }),
+        apiGetSafe("/api/reviews?status=all&limit=60", { reviews: [] }),
+        apiGetSafe("/api/campaigns?limit=60", { campaigns: [] })
       ]);
       setState({
         health,
@@ -106,15 +112,42 @@ export default function RadarPage() {
     event.preventDefault();
     setRunMessage("");
     setError("");
+    setRunningAgent(agent);
     try {
       const path = agent === "agent1" ? "/api/agent1/run" : "/api/agent2/run";
       const payload = agent === "agent1" ? { brands: brief ? [brief] : null } : { brief, source: "auto" };
       const result = await apiPost(path, payload);
       setRunMessage(`${agent.toUpperCase()} ${String(result.status || "started")} - run_id ${String(result.run_id || "unknown")}`);
+      await pollAgentStatus(agent);
       await refreshAll();
     } catch (exc) {
       setError(messageFromError(exc));
+    } finally {
+      setRunningAgent(null);
     }
+  }
+
+  async function pollAgentStatus(agent: "agent1" | "agent2") {
+    const path = agent === "agent1" ? "/api/agent1/status" : "/api/agent2/status";
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      const status = await apiGet(path) as RunStatus;
+      const last = asRecord(status.last_result);
+      const stateValue = String(last.status || (status.running ? "running" : "unknown"));
+      const runId = String(last.run_id || "unknown");
+      if (status.running) {
+        setRunMessage(`${agent.toUpperCase()} running - run_id ${runId}`);
+      } else if (stateValue === "completed") {
+        setRunMessage(`${agent.toUpperCase()} completed - run_id ${runId}`);
+        return;
+      } else if (stateValue === "failed") {
+        throw new Error(`${agent.toUpperCase()} failed: ${String(last.error || "Unknown error")}`);
+      } else {
+        setRunMessage(`${agent.toUpperCase()} ${stateValue} - run_id ${runId}`);
+        return;
+      }
+      await delay(3000);
+    }
+    throw new Error(`${agent.toUpperCase()} is still running after 270 seconds. Check Runs/Status for the final result.`);
   }
 
   const activeAgentConfig = agents.find((agent) => agent.key === activeAgent) || agents[0];
@@ -158,8 +191,12 @@ export default function RadarPage() {
               placeholder="Market, product, channel, or Agent2 brief"
               aria-label="Run brief"
             />
-            <button onClick={(event) => triggerAgent("agent1", event)} type="submit">Run Agent1</button>
-            <button onClick={(event) => triggerAgent("agent2", event)} type="submit">Run Agent2</button>
+            <button disabled={runningAgent !== null} onClick={(event) => triggerAgent("agent1", event)} type="submit">
+              {runningAgent === "agent1" ? "Running Agent1" : "Run Agent1"}
+            </button>
+            <button disabled={runningAgent !== null} onClick={(event) => triggerAgent("agent2", event)} type="submit">
+              {runningAgent === "agent2" ? "Running Agent2" : "Run Agent2"}
+            </button>
           </form>
           <div className="health-strip">
             <HealthPill label="Supabase" value={booleanLabel(state.health?.supabase)} />
@@ -474,6 +511,14 @@ async function apiGet(path: string): Promise<AnyRecord> {
   return readResponse(response);
 }
 
+async function apiGetSafe(path: string, fallback: AnyRecord): Promise<AnyRecord> {
+  try {
+    return await apiGet(path);
+  } catch {
+    return fallback;
+  }
+}
+
 async function apiPost(path: string, payload: AnyRecord): Promise<AnyRecord> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -495,6 +540,10 @@ async function readResponse(response: Response): Promise<AnyRecord> {
 
 function apiHeaders(): Record<string, string> {
   return API_KEY ? { "x-api-key": API_KEY } : {};
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function visibleItems(tab: TabKey, agent: AgentKey, state: FetchState) {
