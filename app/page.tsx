@@ -25,7 +25,8 @@ type Selection = {
   item: AnyRecord | null;
 };
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+const PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+const API_BASE = PUBLIC_API_BASE_URL.replace(/\/$/, "");
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
 const tabs: Array<{ key: TabKey; label: string }> = [
@@ -177,6 +178,9 @@ export default function RadarPage() {
             <span>Viewer</span>
             <span>Read-only public radar</span>
           </div>
+          <a href="kol/" style={{ padding: "6px 14px", background: "#3b82f6", color: "#fff", borderRadius: "6px", fontSize: "12px", fontWeight: 600, textDecoration: "none" }}>
+            KOL Pipeline →
+          </a>
         </header>
 
         <section className="operator-panel">

@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "next build --webpack",
-    "build:github": "GITHUB_PAGES=true next build --webpack",
+    "validate:env": "node scripts/require-public-env.mjs",
+    "build": "pnpm validate:env && next build --webpack",
+    "build:github": "pnpm validate:env && GITHUB_PAGES=true next build --webpack",
     "start": "next start",
     "lint": "next lint"
   },
